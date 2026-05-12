@@ -1,0 +1,83 @@
+name: Nexus Ubuntu VPS (Serveo)
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/nexus-deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      RDP_USER: 'Sinket'
+      RDP_PASS: 'Admin@123'
+      SERVEO_PORT_REQ: '0'
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Banner
+      run: |
+        echo "=============================================="
+        echo "  NEXUS UBUNTU DEPLOYMENT v3.0                "
+        echo "  Tunnel: SERVEO.NET (zero-config SSH)        "
+        echo "  No install, no token, no limit              "
+        echo "=============================================="
+
+    - name: Create SSH User Account
+      run: |
+        sudo useradd -m -s /bin/bash "$RDP_USER"
+        echo "$RDP_USER:$RDP_PASS" | sudo chpasswd
+        sudo usermod -aG sudo "$RDP_USER"
+        sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+        echo "[SUCCESS] User $RDP_USER created"
+
+    - name: Ensure SSH server is running
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y openssh-server
+        sudo systemctl enable --now ssh
+        sudo systemctl restart ssh
+
+    - name: Start Serveo SSH Tunnel
+      run: |
+        mkdir -p "$RUNNER_TEMP"
+        LOG="$RUNNER_TEMP/serveo.log"
+        echo "[INFO] Starting Serveo tunnel (port request: $SERVEO_PORT_REQ -> 22)..."
+        nohup ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ServerAliveInterval=60 \
+          -o ExitOnForwardFailure=yes \
+          -N -T \
+          -R "$SERVEO_PORT_REQ:localhost:22" \
+          serveo.net > "$LOG" 2>&1 &
+        sleep 15
+        echo "----- serveo log -----"
+        cat "$LOG" || true
+        echo "----------------------"
+        FORWARD_LINE=$(grep -E "Forwarding TCP connections from " "$LOG" | head -n1 || true)
+        if [ -n "$FORWARD_LINE" ]; then
+          S_HOST=$(echo "$FORWARD_LINE" | sed -E 's/.*from ([^:]+):.*/\1/')
+          S_PORT=$(echo "$FORWARD_LINE" | sed -E 's/.*:([0-9]+).*/\1/')
+          echo "================ SERVEO CONNECTION ================"
+          echo "Public Host : $S_HOST"
+          echo "Public Port : $S_PORT"
+          echo "Username    : $RDP_USER"
+          echo "Password    : $RDP_PASS"
+          echo "SSH Command : ssh -p $S_PORT $RDP_USER@$S_HOST"
+          echo "==================================================="
+        else
+          echo "[WARN] Could not parse Serveo forwarding line. Tunnel may still be establishing."
+        fi
+
+    - name: Keep Alive
+      run: |
+        echo "Session active for 6 hours max..."
+        for i in $(seq 360 -1 1); do
+          echo "Time remaining: $i minutes"
+          sleep 60
+        done
